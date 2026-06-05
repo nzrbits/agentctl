@@ -156,6 +156,11 @@ def cmd_cleanup(args) -> int:
     return 0
 
 
+def cmd_shell(args) -> int:
+    from . import shell as shell_mod
+    return shell_mod.start(Path.cwd())
+
+
 def cmd_selftest(args) -> int:
     """Run the bundled unit tests (limit detection + doctor)."""
     inst = cfg_mod.install_dir()
@@ -172,7 +177,11 @@ def build_parser() -> argparse.ArgumentParser:
                     "→ DeepSeek (cheap worker via OpenCode).",
     )
     p.add_argument("--version", action="version", version=f"agentctl {__version__}")
-    sub = p.add_subparsers(dest="command", required=True)
+    # no subcommand -> interactive console
+    sub = p.add_subparsers(dest="command", required=False)
+
+    sp = sub.add_parser("shell", help="start the interactive console (default if no command)")
+    sp.set_defaults(func=cmd_shell)
 
     sp = sub.add_parser("doctor", help="diagnose environment, tools, config, env vars")
     sp.set_defaults(func=cmd_doctor)
@@ -210,6 +219,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if not getattr(args, "func", None):  # bare `agentctl` -> interactive console
+        return cmd_shell(args)
     try:
         return args.func(args)
     except KeyboardInterrupt:
