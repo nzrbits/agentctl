@@ -134,6 +134,14 @@ def cmd_cleanup(args) -> int:
         if args.yes:
             subprocess.run(["git", "worktree", "prune"], cwd=str(cwd),
                            capture_output=True, text=True)
+            # delete the throwaway agentctl/* branches left behind by worktrees
+            branches = subprocess.run(["git", "branch", "--list", "agentctl/*"],
+                                      cwd=str(cwd), capture_output=True, text=True).stdout
+            for b in (x.strip().lstrip("* ").strip() for x in branches.splitlines()):
+                if b:
+                    subprocess.run(["git", "branch", "-D", b], cwd=str(cwd),
+                                   capture_output=True, text=True)
+                    removed.append(f"branch {b}")
     if args.runs and args.yes:
         import shutil
         for r in _list_runs(cwd):
