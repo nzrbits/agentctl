@@ -1,6 +1,8 @@
 # runtime artifacts
 .agent-runs/
-.agent/config.json          # local, may contain real commands/paths
+
+# local config override (may contain real commands/paths)
+.agent/config.json
 
 # secrets — never commit
 .env
