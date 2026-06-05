@@ -1,0 +1,44 @@
+{
+  "orchestrator": {
+    "primary": "gpt55",
+    "fallback": "claude",
+    "review_required": true
+  },
+  "agents": {
+    "gpt55": {
+      "enabled": true,
+      "command": "CONFIGURE_ME",
+      "args": ["{{PROMPT}}"],
+      "env": ["OPENAI_API_KEY"],
+      "timeout_seconds": 300
+    },
+    "claude": {
+      "enabled": true,
+      "command": "claude",
+      "args": ["-p", "{{PROMPT}}", "--output-format", "json"],
+      "env": ["ANTHROPIC_API_KEY"],
+      "timeout_seconds": 600
+    },
+    "deepseek": {
+      "enabled": true,
+      "command": "opencode",
+      "args": ["run", "--agent", "deepseek-worker", "--format", "json", "{{PROMPT}}"],
+      "env": ["DEEPSEEK_API_KEY"],
+      "timeout_seconds": 300,
+      "fallback_args": ["run", "--model", "deepseek/deepseek-chat", "--format", "json", "{{PROMPT}}"]
+    }
+  },
+  "limits": {
+    "detect_patterns": true,
+    "fallback_on_limit": true
+  },
+  "worktrees": {
+    "enabled": true,
+    "base_dir": ".agent-runs/worktrees"
+  },
+  "safety": {
+    "block_dangerous_commands": true,
+    "deepseek_may_edit": false,
+    "claude_may_edit": true
+  }
+}

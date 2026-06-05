@@ -1,0 +1,15 @@
+# runtime artifacts
+.agent-runs/
+.agent/config.json          # local, may contain real commands/paths
+
+# secrets — never commit
+.env
+*.local.md
+*.secrets.*
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/

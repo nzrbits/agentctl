@@ -1,0 +1,18 @@
+#!/usr/bin/env python3
+"""agentctl entrypoint. Locates the bundled package and runs the CLI.
+
+This works whether you call it via absolute path, a symlink on PATH, or from
+any working directory — the target repo is always your *current* directory.
+"""
+import os
+import sys
+
+# Resolve symlinks so a `~/bin/agentctl -> ~/agentctl/agentctl` symlink works.
+_here = os.path.dirname(os.path.realpath(__file__))
+if _here not in sys.path:
+    sys.path.insert(0, _here)
+
+from agentctl_core.cli import main  # noqa: E402
+
+if __name__ == "__main__":
+    sys.exit(main())
