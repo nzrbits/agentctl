@@ -163,6 +163,14 @@ def cmd_cleanup(args) -> int:
     return 0
 
 
+def cmd_ingest(args) -> int:
+    cwd = Path.cwd()
+    run = Path(args.run)
+    if not run.exists():
+        run = cwd / ".agent-runs" / args.run
+    return runner_mod.ingest(run)
+
+
 def cmd_shell(args) -> int:
     from . import shell as shell_mod
     return shell_mod.start(Path.cwd())
@@ -203,10 +211,17 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--caller", choices=["local", "claude", "gpt55", "auto"], default="auto",
                     help="who owns the LOGIC: local/claude = Claude reasons from DeepSeek's "
                          "receipts (default, stable); gpt55 = optional GPT-5.5 review when it has tokens")
-    sp.add_argument("--route", choices=["auto", "deepseek", "deepseek-gpt55", "deepseek-claude"],
+    sp.add_argument("--route",
+                    choices=["auto", "deepseek", "deepseek-gpt55", "deepseek-claude", "deepseek-chatgpt"],
                     default="auto",
-                    help="agent route; default from config = deepseek (workhorse=DeepSeek, logic=local/Claude)")
+                    help="agent route; default from config = deepseek (workhorse=DeepSeek, logic=local/Claude). "
+                         "deepseek-chatgpt = write a paste-ready GPT-5.5 prompt for ChatGPT (no agent tokens)")
     sp.set_defaults(func=cmd_run)
+
+    sp = sub.add_parser("ingest",
+                        help="ingest a pasted ChatGPT reply (GPT-5.5 logic) into a run")
+    sp.add_argument("run", help="run id or path under .agent-runs/")
+    sp.set_defaults(func=cmd_ingest)
 
     sp = sub.add_parser("status", help="list recent runs")
     sp.add_argument("--limit", type=int, default=10)

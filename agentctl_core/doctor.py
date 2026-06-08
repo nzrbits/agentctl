@@ -96,9 +96,18 @@ def collect(cwd: Path) -> list[dict]:
     agents = cfg.get("agents", {})
     # gpt55
     gpt = agents.get("gpt55", {})
-    if gpt.get("command") in (None, "", "CONFIGURE_ME"):
+    if gpt.get("type") == "http_openai":
+        key_env = gpt.get("api_key_env", "OPENAI_API_KEY")
+        if os.environ.get(key_env):
+            add("orchestrator gpt55", OK,
+                f"http_openai model={gpt.get('model','gpt-5.5')} ({key_env} set)")
+        else:
+            add("orchestrator gpt55", WARN,
+                f"http_openai model={gpt.get('model','gpt-5.5')} — {key_env} unset; "
+                "add API key + billing (platform.openai.com). Until then GPT-5.5 review is skipped.")
+    elif gpt.get("command") in (None, "", "CONFIGURE_ME"):
         add("orchestrator gpt55", WARN,
-            "command=CONFIGURE_ME → not wired. Falls back to local Claude heuristic.")
+            "command=CONFIGURE_ME → not wired. Local synthesis only.")
     elif shutil.which(gpt.get("command", "")):
         add("orchestrator gpt55", OK, f"command={gpt['command']}")
     else:

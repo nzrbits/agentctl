@@ -18,6 +18,8 @@ import selectors
 import shutil
 import signal
 import subprocess
+import urllib.error
+import urllib.request
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -214,6 +216,66 @@ def _extract_json(text: str) -> Optional[dict]:
     return candidates[-1] if candidates else None
 
 
+def _run_http_openai(name: str, agent_cfg: dict, prompt: str,
+                     dry_run: bool = False, timeout: int = 120) -> AgentResult:
+    """Deterministic GPT-5.5 route via the OpenAI HTTP API (request -> response).
+
+    No agent loop, no event stream, no silent empty exits — the failure mode that
+    made the opencode/OAuth route unusable. Needs a real OpenAI API key (env
+    `api_key_env`, default OPENAI_API_KEY) and API billing on the account.
+    """
+    model = agent_cfg.get("model", "gpt-5.5")
+    res = AgentResult(agent=name, status="error",
+                      command_display=f"POST openai/v1/chat/completions ({model})")
+    if dry_run:
+        res.status = "dry_run"
+        res.message = "[dry-run] would call the OpenAI API"
+        return res
+    key_env = agent_cfg.get("api_key_env", "OPENAI_API_KEY")
+    key = os.environ.get(key_env)
+    if not key:
+        res.status = "not_configured"
+        res.message = (f"no {key_env} set — create an API key at platform.openai.com "
+                       "(needs API billing) and put it in agentctl's .env")
+        return res
+    url = agent_cfg.get("base_url", "https://api.openai.com/v1/chat/completions")
+    body = json.dumps({"model": model,
+                       "messages": [{"role": "user", "content": prompt}]}).encode()
+    req = urllib.request.Request(url, data=body, method="POST", headers={
+        "Authorization": f"Bearer {key}", "Content-Type": "application/json"})
+    t0 = time.time()
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            data = json.loads(r.read())
+        text = (data.get("choices") or [{}])[0].get("message", {}).get("content", "") or ""
+        res.status = "ok"
+        res.exit_code = 0
+        res.stdout = text
+        res.report = _extract_json(text)
+        res.duration_s = round(time.time() - t0, 2)
+        res.message = f"openai {model} ok ({data.get('usage', {}).get('total_tokens', '?')} tok)"
+    except urllib.error.HTTPError as e:
+        try:
+            bodytxt = e.read().decode()[:400]
+        except Exception:
+            bodytxt = ""
+        res.duration_s = round(time.time() - t0, 2)
+        res.stderr = f"HTTP {e.code}: {bodytxt}"
+        finding = limits.classify(f"{e.code} {bodytxt}", agent=name)
+        if finding.detected:
+            res.status = "limit"
+            res.limit = finding.as_dict()
+            res.message = f"openai {finding.kind}: {bodytxt[:160]}"
+        else:
+            res.status = "error"
+            res.message = f"openai HTTP {e.code}: {bodytxt[:160]}"
+    except Exception as e:  # noqa: BLE001
+        res.duration_s = round(time.time() - t0, 2)
+        res.status = "error"
+        res.message = f"openai call failed: {str(e)[:160]}"
+    return res
+
+
 def run_agent(
     name: str,
     agent_cfg: dict,
@@ -223,6 +285,9 @@ def run_agent(
     timeout: Optional[int] = None,
     idle_timeout: Optional[int] = None,
 ) -> AgentResult:
+    if agent_cfg.get("type") == "http_openai":
+        return _run_http_openai(name, agent_cfg, prompt, dry_run=dry_run,
+                                timeout=timeout or int(agent_cfg.get("timeout_seconds", 120)))
     cmd = build_command(agent_cfg, prompt)
     disp = _display(cmd, prompt)
     res = AgentResult(agent=name, status="error", command=cmd, command_display=disp)

@@ -150,6 +150,9 @@ def _gpt_available(ctx: RunContext) -> bool:
     gpt = ctx.config.get("agents", {}).get("gpt55", {})
     if not gpt.get("enabled", True):
         return False
+    if gpt.get("type") == "http_openai":
+        # deterministic route: available iff the API key is set
+        return bool(os.environ.get(gpt.get("api_key_env", "OPENAI_API_KEY")))
     cmd = gpt.get("command")
     return bool(cmd) and cmd != "CONFIGURE_ME" and bool(__import__("shutil").which(cmd))
 
@@ -173,6 +176,8 @@ def _optional_reviewer(ctx: RunContext) -> str | None:
         return "gpt55" if _gpt_available(ctx) else None
     if ctx.route == "deepseek-claude":
         return "claude"
+    if ctx.route == "deepseek-chatgpt":
+        return "chatgpt"  # manual ChatGPT handoff — always available, no agent tokens
     policy = ctx.config.get("orchestrator", {}).get("review_policy", "best_effort_gpt55")
     if policy == "none":
         return None
@@ -345,7 +350,7 @@ def _resolve_route(config: dict, route: str, caller: str) -> str:
     if route != "auto":
         return route
     configured = config.get("orchestrator", {}).get("default_route")
-    if configured in ("deepseek", "deepseek-gpt55", "deepseek-claude"):
+    if configured in ("deepseek", "deepseek-gpt55", "deepseek-claude", "deepseek-chatgpt"):
         return configured
     if caller == "claude":
         return "deepseek-gpt55"
@@ -488,7 +493,7 @@ def _run_review_agent(ctx: RunContext, cfg: dict, run_dir: Path, reviewer: str |
     if not reviewer:
         return None
     agent_cfg = cfg.get("agents", {}).get(reviewer, {})
-    if reviewer == "gpt55":
+    if reviewer in ("gpt55", "chatgpt"):
         role = "gpt55-reviewer"
         goal = (
             "You are an optional best-effort reviewer. DeepSeek is a RETRIEVAL worker only: its raw tool "
@@ -514,6 +519,8 @@ def _run_review_agent(ctx: RunContext, cfg: dict, run_dir: Path, reviewer: str |
         contract["deepseek_findings"] = ds_res.report
     prompt = _compose_agent_prompt(ctx, template, contract)
     (run_dir / f"prompt-{reviewer}.md").write_text(prompt)
+    if reviewer == "chatgpt":
+        return _chatgpt_handoff(ctx, run_dir, prompt)
     ctx.log("delegate", msg=f"delegate_{reviewer} (review-only)")
     ctx.live(f"validation: {reviewer} review started")
     timeout = _cap_timeout(ctx, "review_timeout_seconds", 45)
@@ -543,6 +550,61 @@ def _persist_result(run_dir: Path, name: str, res: adapters.AgentResult):
         (d / "stderr.txt").write_text(res.stderr)
     if res.report:
         (d / "report.json").write_text(json.dumps(res.report, indent=2))
+
+
+def _chatgpt_handoff(ctx, run_dir, prompt) -> adapters.AgentResult:
+    """GPT-5.5 logic via the ChatGPT subscription — deterministic, no agent tokens.
+
+    Writes a paste-ready prompt and returns a pending handoff. The user pastes the
+    prompt into ChatGPT, saves the reply, and runs `agentctl ingest <run>`.
+    """
+    pf = run_dir / "chatgpt-prompt.md"
+    pf.write_text(prompt)
+    reply = run_dir / "chatgpt-reply.md"
+    res = adapters.AgentResult(agent="chatgpt", status="handoff_pending",
+                               command_display="manual ChatGPT handoff")
+    res.message = (f"GPT-5.5 via ChatGPT — paste {pf.name} into ChatGPT, save the reply to "
+                   f"{reply.name}, then run: agentctl ingest {run_dir.name}")
+    ctx.log("handoff", msg="chatgpt handoff prompt written")
+    ctx.live("validation: GPT-5.5 via ChatGPT — manual handoff")
+    ctx.live(f"  1) paste: {pf}")
+    ctx.live(f"  2) save reply to: {reply}")
+    ctx.live(f"  3) run: agentctl ingest {run_dir.name}")
+    _persist_result(run_dir, "chatgpt", res)
+    return res
+
+
+def ingest(run_dir: Path) -> int:
+    """Ingest a pasted ChatGPT reply (GPT-5.5 logic) into an existing run."""
+    if not run_dir.exists():
+        print(f"no such run: {run_dir}")
+        return 1
+    reply = run_dir / "chatgpt-reply.md"
+    if not reply.exists() or not reply.read_text().strip():
+        print(f"paste ChatGPT's answer into {reply} first, then re-run ingest.")
+        return 1
+    text = reply.read_text()
+    d = run_dir / "agent-chatgpt"
+    d.mkdir(exist_ok=True)
+    (d / "stdout.txt").write_text(text)
+    report = adapters._extract_json(text)
+    if report:
+        (d / "report.json").write_text(json.dumps(report, indent=2))
+    (d / "result.json").write_text(json.dumps(
+        {"agent": "chatgpt", "status": "ok", "message": "ingested from ChatGPT",
+         "report": report}, indent=2))
+    rr = run_dir / "review-report.md"
+    decision = (report or {}).get("recommended_next_action")
+    section = ("\n\n## GPT-5.5 via ChatGPT — ingested\n\n"
+               + (f"- decision: {decision}\n\n" if decision else "")
+               + "<details><summary>answer</summary>\n\n"
+               + "\n".join(f"> {ln}" for ln in text.splitlines())
+               + "\n\n</details>\n")
+    rr.write_text((rr.read_text() if rr.exists() else "") + section)
+    print(f"ingested ChatGPT reply -> {d}")
+    if decision:
+        print(f"decision: {decision}")
+    return 0
 
 
 def _persist_run_log(ctx: RunContext, used: list[Path], plan_info: dict,
@@ -584,7 +646,8 @@ def _recommendation(ds_res: adapters.AgentResult | None,
 
 def _primary_result(ds_res: adapters.AgentResult | None,
                     review_res: adapters.AgentResult | None) -> adapters.AgentResult | None:
-    if review_res and review_res.status not in ("unavailable", "not_configured", "tool_missing"):
+    if review_res and review_res.status not in ("unavailable", "not_configured",
+                                                "tool_missing", "handoff_pending"):
         return review_res
     return ds_res
 
@@ -677,6 +740,10 @@ def _review(ctx: RunContext, plan_info, ds_res, review_res, stage: str = "comple
     agent_block("DeepSeek Execution Worker", ds_res)
     if plan_info.get("reviewer") == "gpt55":
         agent_block("GPT-5.5 Lead Reviewer", review_res)
+    elif plan_info.get("reviewer") == "chatgpt":
+        agent_block("GPT-5.5 via ChatGPT (manual handoff)", review_res)
+    elif plan_info.get("reviewer") == "claude":
+        agent_block("Claude Reviewer", review_res)
 
     # decision
     lines.append("## Orchestrator decision")

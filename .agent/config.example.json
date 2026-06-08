@@ -19,28 +19,55 @@
   "agents": {
     "gpt55": {
       "enabled": true,
-      "command": "CONFIGURE_ME",
-      "args": ["{{PROMPT}}"],
-      "env": ["OPENAI_API_KEY"],
+      "env": [
+        "OPENAI_API_KEY"
+      ],
       "timeout_seconds": 45,
-      "idle_timeout_seconds": 30
+      "idle_timeout_seconds": 30,
+      "type": "http_openai",
+      "model": "gpt-5.5",
+      "api_key_env": "OPENAI_API_KEY",
+      "base_url": "https://api.openai.com/v1/chat/completions"
     },
     "claude": {
       "enabled": true,
       "command": "claude",
-      "args": ["-p", "{{PROMPT}}", "--output-format", "json"],
-      "env": ["ANTHROPIC_API_KEY"],
+      "args": [
+        "-p",
+        "{{PROMPT}}",
+        "--output-format",
+        "json"
+      ],
+      "env": [
+        "ANTHROPIC_API_KEY"
+      ],
       "timeout_seconds": 45,
       "idle_timeout_seconds": 30
     },
     "deepseek": {
       "enabled": true,
       "command": "opencode",
-      "args": ["run", "--agent", "deepseek-worker", "--format", "json", "{{PROMPT}}"],
-      "env": ["DEEPSEEK_API_KEY"],
+      "args": [
+        "run",
+        "--agent",
+        "deepseek-worker",
+        "--format",
+        "json",
+        "{{PROMPT}}"
+      ],
+      "env": [
+        "DEEPSEEK_API_KEY"
+      ],
       "timeout_seconds": 90,
       "idle_timeout_seconds": 30,
-      "fallback_args": ["run", "--model", "deepseek/deepseek-chat", "--format", "json", "{{PROMPT}}"]
+      "fallback_args": [
+        "run",
+        "--model",
+        "deepseek/deepseek-chat",
+        "--format",
+        "json",
+        "{{PROMPT}}"
+      ]
     }
   },
   "limits": {
