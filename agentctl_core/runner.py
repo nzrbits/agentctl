@@ -531,11 +531,17 @@ def _run_review_agent(ctx: RunContext, cfg: dict, run_dir: Path, reviewer: str |
     # API billing, which this account lacks. So GPT-5.5 review is BEST-EFFORT: if it
     # comes back empty, mark it unavailable and never block, retry, or false-accept.
     # DeepSeek's receipts go to local synthesis, which owns the stable decision.
-    if reviewer == "gpt55" and res.status in ("ok", "timeout") \
-            and not adapters._collect_stream_text(res.stdout or "").strip():
-        res.status = "unavailable"
-        res.message = ("free GPT-5.5 route returned no output (opencode OAuth is flaky; "
-                       "deterministic GPT-5.5 needs OpenAI API billing) — local synthesis used")
+    if reviewer == "gpt55" and res.status in ("ok", "timeout"):
+        if agent_cfg.get("type") == "http_openai":
+            # deterministic route returns plain text, not an NDJSON event stream
+            empty = not (res.stdout or "").strip() and not res.report
+        else:
+            empty = not adapters._collect_stream_text(res.stdout or "").strip() and not res.report
+        if empty:
+            res.status = "unavailable"
+            res.message = ("GPT-5.5 review returned no usable output — local synthesis used "
+                           "(opencode/OAuth route is flaky; for a deterministic route set "
+                           "OPENAI_API_KEY with API billing)")
     _persist_result(run_dir, reviewer, res)
     return res
 
