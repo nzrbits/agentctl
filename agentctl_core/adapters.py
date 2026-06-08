@@ -12,8 +12,11 @@ No secrets are ever placed on the command line or in env dumps here.
 from __future__ import annotations
 
 import json
+import os
 import re
+import selectors
 import shutil
+import signal
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -39,6 +42,10 @@ class AgentResult:
 
     def as_dict(self) -> dict:
         d = dict(self.__dict__)
+        d["command"] = [
+            part if len(part) <= 500 else f"<ELIDED_LONG_ARG len={len(part)}>"
+            for part in self.command
+        ]
         # truncate large blobs for the on-disk log readability
         d["stdout"] = self.stdout[-8000:]
         d["stderr"] = self.stderr[-8000:]
@@ -64,6 +71,57 @@ def _display(cmd: list[str], prompt: str) -> str:
         else:
             shown.append(part if len(part) < 120 else part[:117] + "...")
     return " ".join(shown)
+
+
+_SESSION_RE = re.compile(r'"sessionID"\s*:\s*"(ses_[A-Za-z0-9]+)"')
+
+
+def session_id_from_stream(text: str) -> str:
+    """Return the first opencode session id found in an NDJSON event stream, or ""."""
+    m = _SESSION_RE.search(text or "")
+    return m.group(1) if m else ""
+
+
+def stream_has_tool_use(text: str) -> bool:
+    """True if the event stream contains at least one tool_use event."""
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if line.startswith("{") and '"type":"tool_use"' in line.replace(" ", ""):
+            return True
+    return False
+
+
+def collect_tool_receipts(text: str, max_output: int = 8000,
+                          max_receipts: int = 40) -> list[dict]:
+    """Extract completed tool calls (the raw evidence) from an opencode event stream.
+
+    Each tool_use event carries part.state.input (args) and part.state.output
+    (result/file contents). When a worker gathers evidence but emits no final
+    text, these receipts ARE the deliverable — hand them to the synthesizer.
+    """
+    out: list[dict] = []
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if not line.startswith("{") or '"type":"tool_use"' not in line.replace(" ", ""):
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        state = (obj.get("part") or {}).get("state") or {}
+        if state.get("status") != "completed":
+            continue
+        output = state.get("output")
+        if isinstance(output, str) and len(output) > max_output:
+            output = output[:max_output] + f" …[+{len(output) - max_output} chars]"
+        out.append({
+            "tool": (obj.get("part") or {}).get("tool"),
+            "input": state.get("input"),
+            "output": output,
+        })
+        if len(out) >= max_receipts:
+            break
+    return out
 
 
 def _collect_stream_text(text: str) -> str:
@@ -163,6 +221,7 @@ def run_agent(
     cwd: Path,
     dry_run: bool = False,
     timeout: Optional[int] = None,
+    idle_timeout: Optional[int] = None,
 ) -> AgentResult:
     cmd = build_command(agent_cfg, prompt)
     disp = _display(cmd, prompt)
@@ -197,21 +256,85 @@ def run_agent(
         res.message = f"[dry-run] would execute: {disp}"
         return res
 
-    to = timeout or int(agent_cfg.get("timeout_seconds", 300))
+    to = timeout or int(agent_cfg.get("timeout_seconds", 90))
+    idle_to = idle_timeout or int(agent_cfg.get("idle_timeout_seconds", 45))
     t0 = time.time()
+    p = None
+    stdout_parts: list[str] = []
+    stderr_parts: list[str] = []
+    timed_out_reason = ""
     try:
-        p = subprocess.run(
-            cmd, cwd=str(cwd), capture_output=True, text=True, timeout=to
+        p = subprocess.Popen(
+            cmd,
+            cwd=str(cwd),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
         )
+        sel = selectors.DefaultSelector()
+        if p.stdout:
+            sel.register(p.stdout, selectors.EVENT_READ, "stdout")
+        if p.stderr:
+            sel.register(p.stderr, selectors.EVENT_READ, "stderr")
+        deadline = t0 + to
+        idle_deadline = time.time() + idle_to
+        while p.poll() is None:
+            now = time.time()
+            if now >= deadline:
+                timed_out_reason = f"timed out after {to}s"
+                break
+            if now >= idle_deadline:
+                timed_out_reason = f"idle timeout after {idle_to}s without output"
+                break
+            wait_for = max(0.1, min(1.0, deadline - now, idle_deadline - now))
+            for key, _ in sel.select(timeout=wait_for):
+                chunk = key.fileobj.readline()
+                if not chunk:
+                    try:
+                        sel.unregister(key.fileobj)
+                    except Exception:
+                        pass
+                    continue
+                if key.data == "stdout":
+                    stdout_parts.append(chunk)
+                else:
+                    stderr_parts.append(chunk)
+                idle_deadline = time.time() + idle_to
+        if timed_out_reason:
+            raise subprocess.TimeoutExpired(cmd, to)
+        stdout, stderr = p.communicate(timeout=2)
+        stdout = "".join(stdout_parts) + (stdout or "")
+        stderr = "".join(stderr_parts) + (stderr or "")
         res.exit_code = p.returncode
-        res.stdout = p.stdout or ""
-        res.stderr = p.stderr or ""
+        res.stdout = stdout or ""
+        res.stderr = stderr or ""
     except subprocess.TimeoutExpired as e:
+        stdout = "".join(stdout_parts) + (e.stdout or "")
+        stderr = "".join(stderr_parts) + (e.stderr or "")
+        if isinstance(stdout, bytes):
+            stdout = stdout.decode(errors="replace")
+        if isinstance(stderr, bytes):
+            stderr = stderr.decode(errors="replace")
         res.status = "timeout"
         res.duration_s = round(time.time() - t0, 2)
-        res.message = f"timed out after {to}s"
-        res.stdout = (e.stdout or b"").decode(errors="replace") if isinstance(e.stdout, bytes) else (e.stdout or "")
-        res.stderr = (e.stderr or b"").decode(errors="replace") if isinstance(e.stderr, bytes) else (e.stderr or "")
+        res.message = timed_out_reason or f"timed out after {to}s"
+        if p is not None:
+            try:
+                os.killpg(p.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            except PermissionError:
+                pass
+            try:
+                killed_stdout, killed_stderr = p.communicate(timeout=2)
+                stdout = (stdout or "") + (killed_stdout or "")
+                stderr = (stderr or "") + (killed_stderr or "")
+            except subprocess.TimeoutExpired:
+                pass
+        res.stdout = stdout
+        res.stderr = stderr
         return res
     except Exception as e:  # noqa: BLE001 - surface anything as a clean error
         res.status = "error"

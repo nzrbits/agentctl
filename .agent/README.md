@@ -5,11 +5,11 @@ This directory ships the prompts and config that `agentctl` uses.
 ```
 .agent/
   prompts/
-    gpt55-orchestrator.md   # lead brain: plan, route, review, decide
-    claude-builder.md       # senior implementation specialist
-    deepseek-worker.md      # cheap scout / executor (via OpenCode)
+    gpt55-orchestrator.md   # lead orchestrator: plan, route, final review, decide
+    claude-reviewer.md      # architecture reviewer: infra risk and design validation
+    deepseek-worker.md      # execution worker: token-efficient scout / executor
   opencode/
-    deepseek-worker.md      # OpenCode agent definition (install to use --agent)
+    deepseek-worker.md      # OpenCode execution worker definition
   config.example.json       # copy to config.json to customize
   config.json               # your local config (gitignored)
 ```
@@ -49,4 +49,4 @@ opencode run --model deepseek/deepseek-chat --format json "<prompt>"
 `config.example.json` ships `gpt55.command = "CONFIGURE_ME"`. Until you set a
 real command, the orchestrator falls back to a local Claude/heuristic planner
 and every run is flagged `GPT_LIMIT_ACTIVE`. Point `command`/`args` at your real
-GPT-5.5 CLI or a thin API wrapper to enable the lead brain.
+GPT-5.5 CLI or a thin API wrapper to enable the Lead Orchestrator.

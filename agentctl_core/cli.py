@@ -39,6 +39,9 @@ def cmd_run(args) -> int:
         cwd=cwd,
         dry_run=args.dry_run,
         allow_edit=args.allow_edit,
+        timeout_seconds=args.timeout_seconds,
+        caller=args.caller,
+        route=args.route,
     )
     return 0
 
@@ -58,9 +61,13 @@ def cmd_status(args) -> int:
                 log = json.loads(log_f.read_text())
                 task = log.get("task", "")[:60]
                 flags = ",".join(log.get("flags", [])) or "-"
-                route = "claude" if any(
-                    res.get("agent") == "claude" for res in log.get("results", [])
-                ) else "deepseek"
+                agents = [res.get("agent") for res in log.get("results", [])]
+                if "gpt55" in agents:
+                    route = "gpt55-review"
+                elif "claude" in agents:
+                    route = "claude-review"
+                else:
+                    route = "deepseek"
             except json.JSONDecodeError:
                 pass
         print(f"  {r.name}")
@@ -173,8 +180,7 @@ def cmd_selftest(args) -> int:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="agentctl",
-        description="Local multi-agent orchestrator: GPT-5.5 (brain) → Claude (builder) "
-                    "→ DeepSeek (cheap worker via OpenCode).",
+        description="Local multi-agent orchestrator with DeepSeek-first routes.",
     )
     p.add_argument("--version", action="version", version=f"agentctl {__version__}")
     # no subcommand -> interactive console
@@ -192,6 +198,14 @@ def build_parser() -> argparse.ArgumentParser:
                     help="plan + write prompts/run-dir but do NOT execute agents")
     sp.add_argument("--allow-edit", action="store_true",
                     help="permit agents to edit files (in isolated worktrees)")
+    sp.add_argument("--timeout-seconds", type=int,
+                    help="overall run budget; writes timeout artifacts instead of relying on shell kill")
+    sp.add_argument("--caller", choices=["local", "claude", "gpt55", "auto"], default="auto",
+                    help="who owns the LOGIC: local/claude = Claude reasons from DeepSeek's "
+                         "receipts (default, stable); gpt55 = optional GPT-5.5 review when it has tokens")
+    sp.add_argument("--route", choices=["auto", "deepseek", "deepseek-gpt55", "deepseek-claude"],
+                    default="auto",
+                    help="agent route; default from config = deepseek (workhorse=DeepSeek, logic=local/Claude)")
     sp.set_defaults(func=cmd_run)
 
     sp = sub.add_parser("status", help="list recent runs")

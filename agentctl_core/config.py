@@ -8,28 +8,46 @@ from typing import Any
 
 # Mirrors .agent/config.example.json so agentctl works with zero config files.
 DEFAULTS: dict[str, Any] = {
-    "orchestrator": {"primary": "gpt55", "fallback": "claude", "review_required": True},
+    "orchestrator": {
+        "primary": "gpt55",
+        "fallback": "claude",
+        "review_required": True,
+        "review_policy": "reciprocal",
+        "default_caller": "gpt55",
+        "run_timeout_seconds": 120,
+        "agent_timeout_seconds": 90,
+        "review_timeout_seconds": 45,
+        "idle_timeout_seconds": 30,
+        "role_policy": {
+            "gpt55": "Lead Orchestrator: planning, routing, final review, and final decision authority",
+            "claude": "Architecture Reviewer: infrastructure architecture, risk review, and lightweight code design validation",
+            "deepseek": "Execution Worker: token-efficient repository inspection, tests, logs, context packs, and low-risk implementation",
+        },
+    },
     "agents": {
         "gpt55": {
             "enabled": True,
             "command": "CONFIGURE_ME",
             "args": ["{{PROMPT}}"],
             "env": ["OPENAI_API_KEY"],
-            "timeout_seconds": 300,
+            "timeout_seconds": 45,
+            "idle_timeout_seconds": 30,
         },
         "claude": {
             "enabled": True,
             "command": "claude",
             "args": ["-p", "{{PROMPT}}", "--output-format", "json"],
             "env": ["ANTHROPIC_API_KEY"],
-            "timeout_seconds": 600,
+            "timeout_seconds": 45,
+            "idle_timeout_seconds": 30,
         },
         "deepseek": {
             "enabled": True,
             "command": "opencode",
             "args": ["run", "--agent", "deepseek-worker", "--format", "json", "{{PROMPT}}"],
             "env": ["DEEPSEEK_API_KEY"],
-            "timeout_seconds": 300,
+            "timeout_seconds": 90,
+            "idle_timeout_seconds": 30,
         },
     },
     "limits": {"detect_patterns": True, "fallback_on_limit": True},

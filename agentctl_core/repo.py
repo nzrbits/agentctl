@@ -1,6 +1,7 @@
 """Read-only repository snapshot: git state, structure, package manager, tests."""
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -87,15 +88,20 @@ def file_tree(cwd: Path, max_files: int = 200) -> list[str]:
             if files:  # empty when repo has no commits / nothing staged
                 return sorted(files)[:max_files]
     skip = {".git", "node_modules", ".venv", "venv", "__pycache__", ".agent-runs",
-            "dist", "build", ".next", "target"}
+            "dist", "build", ".next", "target", "Library", "Applications",
+            "Downloads", ".Trash", ".cache", ".npm", ".cargo", ".rustup",
+            ".IdentityService", ".ServiceHub", ".android"}
     out_files: list[str] = []
-    for p in sorted(cwd.rglob("*")):
-        if any(part in skip for part in p.parts):
+    for root, dirs, files in os.walk(cwd):
+        dirs[:] = sorted(d for d in dirs if d not in skip)
+        rel_root = Path(root).relative_to(cwd)
+        if any(part in skip for part in rel_root.parts):
+            dirs[:] = []
             continue
-        if p.is_file():
-            out_files.append(str(p.relative_to(cwd)))
-        if len(out_files) >= max_files:
-            break
+        for name in sorted(files):
+            out_files.append(str((Path(root) / name).relative_to(cwd)))
+            if len(out_files) >= max_files:
+                return out_files
     return out_files
 
 

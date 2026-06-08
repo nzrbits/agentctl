@@ -1,12 +1,13 @@
 """Unit tests for safety scanning and adapter command building / parsing."""
 import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 
-from agentctl_core import safety, adapters, config as cfg_mod  # noqa: E402
+from agentctl_core import safety, adapters, config as cfg_mod, repo  # noqa: E402
 
 
 class TestSafety(unittest.TestCase):
@@ -46,6 +47,27 @@ class TestAdapterBuild(unittest.TestCase):
         cfg = {"command": "echo", "args": ["{{PROMPT}}"], "enabled": True}
         res = adapters.run_agent("deepseek", cfg, "hi", Path("."), dry_run=True)
         self.assertEqual(res.status, "dry_run")
+
+    def test_timeout_returns_clean_result(self):
+        cfg = {"command": "sh", "args": ["-c", "sleep 2"], "enabled": True,
+               "timeout_seconds": 1}
+        res = adapters.run_agent("deepseek", cfg, "x", Path("."), dry_run=False)
+        self.assertEqual(res.status, "timeout")
+        self.assertIn("timed out", res.message)
+
+    def test_idle_timeout_returns_clean_result(self):
+        cfg = {"command": "sh", "args": ["-c", "sleep 2"], "enabled": True,
+               "timeout_seconds": 10, "idle_timeout_seconds": 1}
+        res = adapters.run_agent("deepseek", cfg, "x", Path("."), dry_run=False)
+        self.assertEqual(res.status, "timeout")
+        self.assertIn("idle timeout", res.message)
+
+    def test_as_dict_elides_long_command_args(self):
+        res = adapters.AgentResult(agent="deepseek", status="dry_run",
+                                   command=["opencode", "x" * 1000])
+        logged = res.as_dict()
+        self.assertEqual(logged["command"][0], "opencode")
+        self.assertTrue(logged["command"][1].startswith("<ELIDED_LONG_ARG"))
 
     def test_extract_json_embedded(self):
         text = 'chatter before\n{"status":"done","summary":"ok"}\ntrailing'
@@ -103,6 +125,16 @@ class TestConfig(unittest.TestCase):
     def test_mask(self):
         self.assertEqual(cfg_mod.mask(None), "(unset)")
         self.assertTrue(cfg_mod.mask("sk-1234567890").startswith("SET("))
+
+
+class TestRepoSnapshot(unittest.TestCase):
+    def test_file_tree_stops_at_limit_without_git(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for i in range(20):
+                (root / f"f{i:02d}.txt").write_text("x")
+            files = repo.file_tree(root, max_files=5)
+            self.assertEqual(len(files), 5)
 
 
 if __name__ == "__main__":

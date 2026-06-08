@@ -21,7 +21,7 @@ from . import runner as runner_mod
 
 BANNER = r"""
   agentctl {ver}  — interactive console
-  GPT-5.5 (brain) -> Claude (builder) -> DeepSeek (cheap worker)
+  DeepSeek-first routes; GPT-5.5/Claude reviewers are optional
 
   Type a task and press Enter to run it.
   Meta commands start with '/'. Type /help for the list, /exit to quit.
