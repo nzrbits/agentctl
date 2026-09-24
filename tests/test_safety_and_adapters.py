@@ -71,12 +71,12 @@ class TestAdapterBuild(unittest.TestCase):
 
     def test_extract_json_embedded(self):
         text = 'chatter before\n{"status":"done","summary":"ok"}\ntrailing'
-        obj = adapters._extract_json(text)
+        obj = adapters.extract_json(text)
         self.assertEqual(obj.get("status"), "done")
 
     def test_extract_json_picks_report(self):
         text = '{"noise":1} ... {"action":"final_answer","reasoning_summary":"x"}'
-        obj = adapters._extract_json(text)
+        obj = adapters.extract_json(text)
         self.assertEqual(obj.get("action"), "final_answer")
 
     def test_extract_from_opencode_stream(self):
@@ -86,13 +86,13 @@ class TestAdapterBuild(unittest.TestCase):
             '\\"summary\\":\\"ok\\"}"}}\n'
             '{"type":"step_finish","part":{"type":"step-finish"}}'
         )
-        obj = adapters._extract_json(stream)
+        obj = adapters.extract_json(stream)
         self.assertEqual(obj.get("status"), "done")
 
     def test_extract_from_claude_result_wrapper(self):
         wrapped = ('{"type":"result","result":"text {\\"status\\":\\"done\\",'
                    '\\"changed_files\\":[\\"a.py\\"]}"}')
-        obj = adapters._extract_json(wrapped)
+        obj = adapters.extract_json(wrapped)
         self.assertEqual(obj.get("changed_files"), ["a.py"])
 
 

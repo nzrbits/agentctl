@@ -1,3 +1,3 @@
-"""agentctl: local multi-agent orchestrator (GPT-5.5 / Claude / DeepSeek)."""
+"""agentctl: local multi-agent orchestrator. DeepSeek retrieves, a reliable model decides."""
 
 __version__ = "0.1.0"
