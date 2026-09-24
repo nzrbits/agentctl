@@ -9,19 +9,19 @@ from typing import Any
 # Mirrors .agent/config.example.json so agentctl works with zero config files.
 DEFAULTS: dict[str, Any] = {
     "orchestrator": {
-        "primary": "gpt55",
-        "fallback": "claude",
+        "default_caller": "local",
+        "default_route": "deepseek",
         "review_required": True,
-        "review_policy": "reciprocal",
-        "default_caller": "gpt55",
+        "review_policy": "best_effort_gpt55",
         "run_timeout_seconds": 120,
         "agent_timeout_seconds": 90,
         "review_timeout_seconds": 45,
         "idle_timeout_seconds": 30,
         "role_policy": {
-            "gpt55": "Lead Orchestrator: planning, routing, final review, and final decision authority",
-            "claude": "Architecture Reviewer: infrastructure architecture, risk review, and lightweight code design validation",
-            "deepseek": "Execution Worker: token-efficient repository inspection, tests, logs, context packs, and low-risk implementation",
+            "deepseek": "Retrieval worker: read-only tools, returns raw tool receipts, no conclusions",
+            "local": "Logic: synthesizes the answer and the decision from the receipts",
+            "gpt55": "Optional best-effort reviewer, never on the critical path",
+            "claude": "Optional reviewer for architecture, design and risk",
         },
     },
     "agents": {
@@ -50,12 +50,9 @@ DEFAULTS: dict[str, Any] = {
             "idle_timeout_seconds": 30,
         },
     },
-    "limits": {"detect_patterns": True, "fallback_on_limit": True},
     "worktrees": {"enabled": True, "base_dir": ".agent-runs/worktrees"},
     "safety": {
-        "block_dangerous_commands": True,
         "deepseek_may_edit": False,
-        "claude_may_edit": True,
     },
 }
 

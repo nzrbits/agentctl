@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 import secrets
+import shutil
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -50,7 +51,7 @@ class RunContext:
     config: dict
     dry_run: bool
     allow_edit: bool
-    caller: str = "gpt55"
+    caller: str = "local"
     timeout_seconds: int | None = None
     started_at: float = field(default_factory=time.time)
     snapshot: dict = field(default_factory=dict)
@@ -134,7 +135,7 @@ def _compose_agent_prompt(ctx: RunContext, template: str, contract: dict) -> str
 
 
 # --------------------------------------------------------------------------- #
-# orchestrator (GPT-5.5 if wired, else local heuristic)
+# routing plan
 # --------------------------------------------------------------------------- #
 def _is_complex(task: str) -> bool:
     t = task.lower()
@@ -154,7 +155,7 @@ def _gpt_available(ctx: RunContext) -> bool:
         # deterministic route: available iff the API key is set
         return bool(os.environ.get(gpt.get("api_key_env", "OPENAI_API_KEY")))
     cmd = gpt.get("command")
-    return bool(cmd) and cmd != "CONFIGURE_ME" and bool(__import__("shutil").which(cmd))
+    return bool(cmd) and cmd != "CONFIGURE_ME" and bool(shutil.which(cmd))
 
 
 def _resolve_caller(config: dict, caller: str) -> str:
@@ -308,7 +309,7 @@ def _idle_timeout(ctx: RunContext) -> int:
     return max(1, int(ctx.config.get("orchestrator", {}).get("idle_timeout_seconds", 30)))
 
 
-def _harvest_deepseek_evidence(ctx, ds_res, dry_run):
+def _harvest_deepseek_evidence(ctx: RunContext, ds_res: adapters.AgentResult, dry_run: bool) -> None:
     """Use DeepSeek as a RETRIEVAL worker, never as a reasoner.
 
     Top priority of this orchestrator: push the token-heavy retrieval (file reads,
@@ -322,7 +323,7 @@ def _harvest_deepseek_evidence(ctx, ds_res, dry_run):
     if dry_run or ds_res.status != "ok":
         return
     receipts = adapters.collect_tool_receipts(ds_res.stdout or "")
-    note = adapters._collect_stream_text(ds_res.stdout or "").strip()
+    note = adapters.collect_stream_text(ds_res.stdout or "").strip()
     if not receipts and not note:
         return  # nothing gathered at all
     report = {
@@ -526,17 +527,15 @@ def _run_review_agent(ctx: RunContext, cfg: dict, run_dir: Path, reviewer: str |
     timeout = _cap_timeout(ctx, "review_timeout_seconds", 45)
     res = adapters.run_agent(reviewer, agent_cfg, prompt, cwd, dry_run=dry_run,
                              timeout=timeout, idle_timeout=_idle_timeout(ctx))
-    # The free GPT-5.5 route (opencode OAuth / ChatGPT subscription) intermittently
-    # returns an empty stream (exit 0, no text). A deterministic GPT-5.5 needs OpenAI
-    # API billing, which this account lacks. So GPT-5.5 review is BEST-EFFORT: if it
-    # comes back empty, mark it unavailable and never block, retry, or false-accept.
-    # DeepSeek's receipts go to local synthesis, which owns the stable decision.
+    # The opencode/OAuth route to GPT-5.5 can return an empty stream (exit 0, no text).
+    # So the GPT-5.5 review is best-effort: an empty result is marked unavailable and
+    # never blocks, retries or false-accepts. Local synthesis owns the decision.
     if reviewer == "gpt55" and res.status in ("ok", "timeout"):
         if agent_cfg.get("type") == "http_openai":
             # deterministic route returns plain text, not an NDJSON event stream
             empty = not (res.stdout or "").strip() and not res.report
         else:
-            empty = not adapters._collect_stream_text(res.stdout or "").strip() and not res.report
+            empty = not adapters.collect_stream_text(res.stdout or "").strip() and not res.report
         if empty:
             res.status = "unavailable"
             res.message = ("GPT-5.5 review returned no usable output — local synthesis used "
@@ -558,7 +557,7 @@ def _persist_result(run_dir: Path, name: str, res: adapters.AgentResult):
         (d / "report.json").write_text(json.dumps(res.report, indent=2))
 
 
-def _chatgpt_handoff(ctx, run_dir, prompt) -> adapters.AgentResult:
+def _chatgpt_handoff(ctx: RunContext, run_dir: Path, prompt: str) -> adapters.AgentResult:
     """GPT-5.5 logic via the ChatGPT subscription — deterministic, no agent tokens.
 
     Writes a paste-ready prompt and returns a pending handoff. The user pastes the
@@ -593,7 +592,7 @@ def ingest(run_dir: Path) -> int:
     d = run_dir / "agent-chatgpt"
     d.mkdir(exist_ok=True)
     (d / "stdout.txt").write_text(text)
-    report = adapters._extract_json(text)
+    report = adapters.extract_json(text)
     if report:
         (d / "report.json").write_text(json.dumps(report, indent=2))
     (d / "result.json").write_text(json.dumps(
@@ -679,7 +678,8 @@ def _console_summary(ctx: RunContext, ds_res: adapters.AgentResult | None,
     return "\n".join(lines)
 
 
-def _review(ctx: RunContext, plan_info, ds_res, review_res, stage: str = "complete") -> str:
+def _review(ctx: RunContext, plan_info: dict, ds_res: adapters.AgentResult | None,
+            review_res: adapters.AgentResult | None, stage: str = "complete") -> str:
     """Local synthesis review. Optional GPT-5.5 review may add evidence; this always runs."""
     lines = ["# agentctl review report", ""]
     lines.append(f"- run: `{ctx.run_dir.name}`")
@@ -725,7 +725,7 @@ def _review(ctx: RunContext, plan_info, ds_res, review_res, stage: str = "comple
         # Surface the agent's actual prose answer, not just the parsed report.
         # opencode/claude emit NDJSON event streams; the real findings live in the
         # reassembled text, which is dropped by _extract_report when it is not JSON.
-        answer = adapters._collect_stream_text(res.stdout or "").strip()
+        answer = adapters.collect_stream_text(res.stdout or "").strip()
         if answer:
             if len(answer) > 2000:
                 answer = answer[:2000] + " …[truncated — full output in the agent's stdout.txt]"

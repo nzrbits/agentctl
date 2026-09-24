@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -66,6 +67,8 @@ def cmd_status(args) -> int:
                     route = "gpt55-review"
                 elif "claude" in agents:
                     route = "claude-review"
+                elif "chatgpt" in agents:
+                    route = "chatgpt-handoff"
                 else:
                     route = "deepseek"
             except json.JSONDecodeError:
@@ -150,7 +153,6 @@ def cmd_cleanup(args) -> int:
                                    capture_output=True, text=True)
                     removed.append(f"branch {b}")
     if args.runs and args.yes:
-        import shutil
         for r in _list_runs(cwd):
             shutil.rmtree(r, ignore_errors=True)
             removed.append(str(r))

@@ -17,7 +17,7 @@ back the output, then you review and decide. Work in English, keep it concise.
 
 ## HOW THE USER DRIVES IT
 
-- Interactive console: `agentctl console`. In the console the user just types a task (no quotes). Meta commands:
+- Interactive console: `agentctl` (or `agentctl shell`). In the console the user just types a task (no quotes). Meta commands:
   `/cd <path>` — set target repo
   `/status`
   `/review`

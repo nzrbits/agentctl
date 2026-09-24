@@ -31,7 +31,9 @@ from . import limits
 @dataclass
 class AgentResult:
     agent: str
-    status: str                       # ok | not_configured | tool_missing | limit | error | timeout | dry_run
+    # ok | not_configured | tool_missing | limit | error | timeout | dry_run
+    # | unavailable | handoff_pending
+    status: str
     command: list[str] = field(default_factory=list)
     command_display: str = ""
     exit_code: Optional[int] = None
@@ -126,7 +128,7 @@ def collect_tool_receipts(text: str, max_output: int = 8000,
     return out
 
 
-def _collect_stream_text(text: str) -> str:
+def collect_stream_text(text: str) -> str:
     """Reassemble assistant text from an NDJSON event stream.
 
     OpenCode's `--format json` and Claude's `--output-format stream-json` emit
@@ -163,7 +165,7 @@ def _collect_stream_text(text: str) -> str:
     return "\n".join(chunks) if saw_event else ""
 
 
-def _extract_json(text: str) -> Optional[dict]:
+def extract_json(text: str) -> Optional[dict]:
     """Find the most plausible JSON object in agent stdout.
 
     Handles: pure JSON, JSON embedded in chatter, NDJSON event streams
@@ -172,9 +174,9 @@ def _extract_json(text: str) -> Optional[dict]:
     if not text:
         return None
     # 0) if this is an event stream, parse the reassembled assistant text first
-    streamed = _collect_stream_text(text)
+    streamed = collect_stream_text(text)
     if streamed and streamed != text:
-        inner = _extract_json(streamed)
+        inner = extract_json(streamed)
         if inner is not None:
             return inner
     # 1) whole thing
@@ -183,7 +185,7 @@ def _extract_json(text: str) -> Optional[dict]:
         if isinstance(obj, dict):
             # claude `--output-format json` wraps the answer in {"result": "..."}
             if isinstance(obj.get("result"), str):
-                inner = _extract_json(obj["result"])
+                inner = extract_json(obj["result"])
                 if inner is not None:
                     return inner
             return obj
@@ -251,7 +253,7 @@ def _run_http_openai(name: str, agent_cfg: dict, prompt: str,
         res.status = "ok"
         res.exit_code = 0
         res.stdout = text
-        res.report = _extract_json(text)
+        res.report = extract_json(text)
         res.duration_s = round(time.time() - t0, 2)
         res.message = f"openai {model} ok ({data.get('usage', {}).get('total_tokens', '?')} tok)"
     except urllib.error.HTTPError as e:
@@ -412,7 +414,7 @@ def run_agent(
     # Parse the report first. A clean exit + a parseable report means the agent
     # SUCCEEDED, and its content may legitimately discuss "rate limit", "401",
     # etc. (e.g. summarizing code/tests). We must not let that trip detection.
-    res.report = _extract_json(res.stdout)
+    res.report = extract_json(res.stdout)
     succeeded = res.exit_code == 0 and res.report is not None
 
     # stderr is where CLIs print real infra failures -> always scanned.
