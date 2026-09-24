@@ -10,9 +10,8 @@ This repository uses `agentctl` as the local multi-agent workflow. One rule:
   prose is not trusted. It carries the token-heavy file/log reading.
 - **Local / Claude — Logic.** The stable reasoner and decision-maker. Synthesizes the answer from
   DeepSeek's receipts. This is the default; it never depends on a flaky channel.
-- **GPT-5.5 — Optional best-effort review.** A second opinion only when it has a working route. The
-  free OpenCode/OAuth route is unreliable and a deterministic one needs OpenAI API billing, so GPT-5.5
-  is never load-bearing. If it returns empty, the run completes on local synthesis.
+- **GPT-5.5 — Optional best-effort review.** A second opinion when a route is configured (API key or the
+  ChatGPT handoff). It is never load-bearing. If it returns empty, the run completes on local synthesis.
 
 ## Default Workflow
 

@@ -1,52 +1,58 @@
-# .agent/ — agentctl assets
+# .agent/
 
-This directory ships the prompts and config that `agentctl` uses.
+Prompts and config that `agentctl` ships with.
 
 ```
 .agent/
   prompts/
-    gpt55-orchestrator.md   # lead orchestrator: plan, route, final review, decide
-    claude-reviewer.md      # architecture reviewer: infra risk and design validation
-    deepseek-worker.md      # execution worker: token-efficient scout / executor
+    deepseek-worker.md          # retrieval worker: read-only tools, returns receipts
+    gpt55-reviewer.md           # optional second opinion from GPT-5.5
+    gpt55-orchestrator.md       # fallback template for the GPT-5.5 reviewer
+    claude-reviewer.md          # optional architecture and risk review
+    gpt55-operator-onboarding.md  # paste-in briefing for driving agentctl from a ChatGPT chat
   opencode/
-    deepseek-worker.md      # OpenCode execution worker definition
-  config.example.json       # copy to config.json to customize
-  config.json               # your local config (gitignored)
+    deepseek-worker.md          # OpenCode agent definition for the worker
+  config.example.json           # shipped defaults, copy to config.json to change them
+  config.json                   # your local config (gitignored)
 ```
 
-## Config resolution order
+## Config resolution
 
-`agentctl` loads the **first** file it finds, merged over built-in defaults:
+`agentctl` merges the first file it finds over the built-in defaults:
 
-1. `<cwd>/.agent/config.json`  — per-repo override
-2. `<install>/.agent/config.json` — your global override
-3. `<install>/.agent/config.example.json` — shipped example
+1. `<cwd>/.agent/config.json` for a per-repo override
+2. `<install>/.agent/config.json` for your global override
+3. `<install>/.agent/config.example.json`, the shipped example
 
-## Wiring DeepSeek (OpenCode)
+## DeepSeek via OpenCode
 
-The default deepseek command is:
+Default command:
 
 ```
 opencode run --agent deepseek-worker --format json "<prompt>"
 ```
 
-To use `--agent deepseek-worker`, install the agent definition:
+Install the agent definition once:
 
 ```
 mkdir -p ~/.config/opencode/agent
 cp .agent/opencode/deepseek-worker.md ~/.config/opencode/agent/
 ```
 
-If you don't install the agent, switch the deepseek args to the model form
-(already present as `fallback_args` in `config.example.json`):
+Without it, switch the deepseek `args` to the model form (already in `fallback_args` in the example):
 
 ```
 opencode run --model deepseek/deepseek-chat --format json "<prompt>"
 ```
 
-## Wiring GPT-5.5
+## GPT-5.5
 
-`config.example.json` ships `gpt55.command = "CONFIGURE_ME"`. Until you set a
-real command, the orchestrator falls back to a local Claude/heuristic planner
-and every run is flagged `GPT_LIMIT_ACTIVE`. Point `command`/`args` at your real
-GPT-5.5 CLI or a thin API wrapper to enable the Lead Orchestrator.
+The example config uses `"type": "http_openai"`: one HTTP request to the OpenAI API, key from `OPENAI_API_KEY`. Without
+a key the review is skipped and the run flags `GPT_LIMIT_ACTIVE`. The run itself still completes.
+
+No API key? Use `--route deepseek-chatgpt`. agentctl writes a prompt to paste into ChatGPT, and `agentctl ingest <run>`
+adds the answer to the report.
+
+## Claude
+
+`claude -p "<prompt>" --output-format json`, using the Claude Code login. Used for `--route deepseek-claude`.
